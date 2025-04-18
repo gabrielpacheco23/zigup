@@ -5,6 +5,7 @@ const ArrayList = std.ArrayList;
 
 const utils = @import("utils.zig");
 const downloader = @import("downloader.zig");
+const argparser = @import("argparser.zig");
 
 const stdout = std.io.getStdOut().writer();
 const ZIG_WEBSITE: []const u8 = "https://ziglang.org";
@@ -21,6 +22,59 @@ pub fn main() !void {
     defer _ = dba.deinit();
     const allocator = dba.allocator();
 
+    const arguments = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, arguments);
+
+    const args_str = try std.mem.join(allocator, " ", arguments[1..]);
+    defer allocator.free(args_str);
+
+    const args = try argparser.parseArgs(allocator, args_str);
+    defer args.deinit();
+
+    for (args.items) |arg| {
+        switch (arg.type) {
+            .Command => {
+                if (std.mem.eql(u8, arg.name, "upgrade")) try upgradeZig(allocator);
+                if (std.mem.eql(u8, arg.name, "install")) try installVersion();
+            },
+            .Flag => {
+                if (std.mem.eql(u8, arg.name, "version")) try showZigupVersion(allocator);
+                if (std.mem.eql(u8, arg.name, "help")) try displayHelp();
+            },
+            else => unreachable,
+        }
+    }
+}
+
+fn displayHelp() !void {
+    const usage_str =
+        \\ zigup [COMMAND] [OPTIONS...]
+        \\
+        \\ COMMANDS
+        \\   upgrade    Upgrade to zig latest version
+        \\   install    Install latest zig if not installed 
+        \\ 
+        \\ OPTIONS
+        \\  --version     Install specific version
+        \\
+        \\ FLAGS
+        \\  --version     Display zig current version
+        \\  --help        Display this help message
+        \\
+    ;
+    try stdout.print("Usage:{s}\n", .{usage_str});
+}
+
+fn showZigupVersion(allocator: std.mem.Allocator) !void {
+    const this_version = "0.1.0";
+    try stdout.print("zig: {}\n", .{try utils.getInstalledVersion(allocator)});
+    try stdout.print("zigup: {s}\n", .{this_version});
+}
+
+// TODO: this
+fn installVersion() !void {}
+
+fn upgradeZig(allocator: std.mem.Allocator) !void {
     const zig_builds_url = ZIG_WEBSITE ++ DOWNLOAD_PATH;
     const index_file_path = "zig-builds-index.json";
     try downloader.downloadFileWithProgress(allocator, zig_builds_url, index_file_path, false);

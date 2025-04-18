@@ -31,7 +31,7 @@ const Arg = struct {
     value: ?[]const u8,
 };
 
-fn parseArgs(alloc: std.mem.Allocator, src: []const u8) !std.ArrayList(Arg) {
+pub fn parseArgs(alloc: std.mem.Allocator, src: []const u8) !std.ArrayList(Arg) {
     var args: std.ArrayList(Arg) = .init(alloc);
     errdefer args.deinit();
 
@@ -52,7 +52,7 @@ fn parseArgs(alloc: std.mem.Allocator, src: []const u8) !std.ArrayList(Arg) {
             if (curr == src.len or src[curr] == 0 or src[curr] == '-') {
                 try args.append(.{
                     .type = .Flag,
-                    .name = src[start..curr],
+                    .name = src[start + 2 .. curr],
                     .value = null,
                 });
                 curr -= 1;
