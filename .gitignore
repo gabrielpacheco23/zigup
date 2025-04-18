@@ -1,0 +1,4 @@
+src/semver.zig
+zig-out/*
+.zig-cache/*
+argparser
