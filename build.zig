@@ -3,7 +3,8 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{
-        .preferred_optimize_mode = .ReleaseFast,
+        // .preferred_optimize_mode = .ReleaseFast,
+        .preferred_optimize_mode = .ReleaseSmall,
     });
 
     const exe_mod = b.createModule(.{
@@ -16,6 +17,7 @@ pub fn build(b: *std.Build) void {
         .name = "zigup",
         .root_module = exe_mod,
         .use_llvm = false,
+        .strip = true,
     });
 
     exe.linkLibC();
