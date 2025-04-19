@@ -19,24 +19,48 @@ fn expectStr(expected: []const u8, src: []const u8, curr: *usize) !void {
     curr.* += len - 1;
 }
 
-const ArgType = enum {
-    Command,
-    Option,
-    Flag,
+pub const Command = struct {
+    name: []const u8,
 };
 
-const Arg = struct {
-    type: ArgType,
+pub const Option = struct {
     name: []const u8,
     value: ?[]const u8,
 };
 
+pub const Flag = struct {
+    name: []const u8,
+};
+
+pub const Arg = union(enum) {
+    command: Command,
+    option: Option,
+    flag: Flag,
+};
+
+// const Arg = struct {
+//     command: ?Command,
+//     options: ?std.ArrayList(Option),
+//     flags: ?std.ArrayList(Flag),
+// };
+
+// const Arg = struct {
+//     type: ArgType,
+//     name: []const u8,
+//     value: ?[]const u8,
+// };
+
 pub fn parseArgs(alloc: std.mem.Allocator, src: []const u8) !std.ArrayList(Arg) {
+    // pub fn parseArgs(alloc: std.mem.Allocator, src: []const u8) !Arg {
     var args: std.ArrayList(Arg) = .init(alloc);
     errdefer args.deinit();
+    // var args = try alloc.create(Arg);
+    // var args: Arg = undefined;
+    // errdefer alloc.destroy(args);
 
     var curr: usize = 0;
     var start: usize = 0;
+    var i: usize = 0;
 
     while (curr < src.len) : (curr += 1) {
         advanceWhile(std.ascii.isWhitespace, src, &curr);
@@ -46,34 +70,38 @@ pub fn parseArgs(alloc: std.mem.Allocator, src: []const u8) !std.ArrayList(Arg) 
             try expectStr("--", src, &curr);
             advanceWhileNot(std.ascii.isWhitespace, src, &curr);
 
-            const tokName = src[start..curr];
+            const tokName = src[start + 2 .. curr];
             advanceWhile(std.ascii.isWhitespace, src, &curr);
 
             if (curr == src.len or src[curr] == 0 or src[curr] == '-') {
-                try args.append(.{
-                    .type = .Flag,
-                    .name = src[start + 2 .. curr],
-                    .value = null,
-                });
+                try args.append(.{ .flag = .{ .name = tokName } });
                 curr -= 1;
             } else {
                 start = curr;
                 advanceWhileNot(std.ascii.isWhitespace, src, &curr);
                 const optName = src[start..curr];
-                try args.append(.{
-                    .type = .Option,
+
+                // try args.options.append(.{
+                //     .name = tokName,
+                //     .value = optName,
+                // });
+                try args.append(.{ .option = .{
                     .name = tokName,
                     .value = optName,
-                });
+                } });
             }
         } else {
             advanceWhileNot(std.ascii.isWhitespace, src, &curr);
+            const cmdName = src[start..curr];
+
             try args.append(.{
-                .type = .Command,
-                .name = src[start..curr],
-                .value = null,
+                .command = .{
+                    .name = cmdName,
+                    // .options = null,
+                },
             });
         }
+        i += 1;
     }
     return args;
 }
@@ -94,12 +122,14 @@ pub fn main() !void {
     const args = try parseArgs(alloc, args_str);
     defer args.deinit();
 
-    for (args.items) |arg| {
-        if (arg.value) |value| {
-            std.debug.print("------\nArg: name: {s}, type: {}, value: {s}\n", .{ arg.name, arg.type, value });
-        } else {
-            std.debug.print("------\nArg: name: {s}, type: {}\n", .{ arg.name, arg.type });
-        }
-    }
+    std.debug.print("{any}\n", .{args});
+
+    // for (args.items) |arg| {
+    //     if (arg.value) |value| {
+    //         std.debug.print("------\nArg: name: {s}, type: {}, value: {s}\n", .{ arg.name, arg.type, value });
+    //     } else {
+    //         std.debug.print("------\nArg: name: {s}, type: {}\n", .{ arg.name, arg.type });
+    //     }
+    // }
     std.debug.print("------\n", .{});
 }

@@ -28,11 +28,13 @@ pub fn build(b: *std.Build) void {
 
     // b.installArtifact(lib);
 
-    const exe = b.addExecutable(.{
+    var exe = b.addExecutable(.{
         .name = "zigup",
         .root_module = exe_mod,
         .use_llvm = false,
     });
+
+    exe.linkLibC();
 
     b.installArtifact(exe);
 

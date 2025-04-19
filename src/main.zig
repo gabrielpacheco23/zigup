@@ -11,6 +11,10 @@ const stdout = std.io.getStdOut().writer();
 const ZIG_WEBSITE: []const u8 = "https://ziglang.org";
 const DOWNLOAD_PATH: []const u8 = "/download/index.json";
 
+const signal = @cImport({
+    @cInclude("signal.h");
+});
+
 // TODO: MAKE INSTALLING `ZLS` TOO
 // COMMANDS: git clone https://github.com/zigtools/zls
 //           cd zls
@@ -31,17 +35,58 @@ pub fn main() !void {
     const args = try argparser.parseArgs(allocator, args_str);
     defer args.deinit();
 
+    if (args.items.len == 0) {
+        try displayHelp();
+        return;
+    }
+
+    var cmd: ?argparser.Command = null;
+    var opt: ?argparser.Option = null;
+    var flags: std.ArrayList(?argparser.Flag) = .init(allocator);
+    defer flags.deinit();
+
     for (args.items) |arg| {
-        switch (arg.type) {
-            .Command => {
-                if (std.mem.eql(u8, arg.name, "upgrade")) try upgradeZig(allocator);
-                if (std.mem.eql(u8, arg.name, "install")) try installVersion();
-            },
-            .Flag => {
-                if (std.mem.eql(u8, arg.name, "version")) try showZigupVersion(allocator);
-                if (std.mem.eql(u8, arg.name, "help")) try displayHelp();
-            },
-            else => unreachable,
+        try switch (arg) {
+            .command => cmd = arg.command,
+            .option => opt = arg.option,
+            .flag => flags.append(arg.flag),
+        };
+    }
+
+    if (cmd) |command| {
+        if (std.mem.eql(u8, command.name, "upgrade")) {
+            std.debug.print("[INFO] Fetching...\n", .{});
+            // try upgradeZig(allocator);
+            try installVersion(allocator, "latest");
+        } else if (std.mem.eql(u8, command.name, "install")) {
+            if (opt) |option| {
+                if (std.mem.eql(u8, option.name, "version")) {
+                    if (option.value) |value| {
+                        std.debug.print("[INFO] Fetching...\n", .{});
+                        try installVersion(allocator, value);
+                    } else {
+                        try displayHelp();
+                    }
+                }
+            } else {
+                std.debug.print("[INFO] Fetching...\n", .{});
+                if (utils.getInstalledVersion(allocator)) |ver| {
+                    std.debug.print("[INFO] Zig {} is already installed. Run `zigup upgrade` to install the latest version.\n", .{ver});
+                    return;
+                } else |_| {
+                    try installVersion(allocator, "latest");
+                }
+            }
+        }
+    } else {
+        for (flags.items) |flag_item| {
+            if (flag_item) |flag| {
+                if (std.mem.eql(u8, flag.name, "version")) {
+                    try showZigupVersion(allocator);
+                } else {
+                    try displayHelp();
+                }
+            }
         }
     }
 }
@@ -51,11 +96,11 @@ fn displayHelp() !void {
         \\ zigup [COMMAND] [OPTIONS...]
         \\
         \\ COMMANDS
-        \\   upgrade    Upgrade to zig latest version
-        \\   install    Install latest zig if not installed 
+        \\  upgrade       Upgrade to zig latest stable version
+        \\  install       Install zig with --version or default (latest) 
         \\ 
         \\ OPTIONS
-        \\  --version     Install specific version
+        \\  --version     Choose specific version (e.g. 0.14.0)
         \\
         \\ FLAGS
         \\  --version     Display zig current version
@@ -71,10 +116,9 @@ fn showZigupVersion(allocator: std.mem.Allocator) !void {
     try stdout.print("zigup: {s}\n", .{this_version});
 }
 
-// TODO: this
-fn installVersion() !void {}
+fn installVersion(allocator: std.mem.Allocator, chosen_version: []const u8) !void {
+    _ = signal.signal(signal.SIGINT, cleanUp);
 
-fn upgradeZig(allocator: std.mem.Allocator) !void {
     const zig_builds_url = ZIG_WEBSITE ++ DOWNLOAD_PATH;
     const index_file_path = "zig-builds-index.json";
     try downloader.downloadFileWithProgress(allocator, zig_builds_url, index_file_path, false);
@@ -90,11 +134,9 @@ fn upgradeZig(allocator: std.mem.Allocator) !void {
 
     const root = parsed.value.object;
 
-    // Create a list to store version items
     var version_items: ArrayList(VersionItem) = .init(allocator);
     defer version_items.deinit();
 
-    // Iterate through keys in the root object and store them
     var root_it = root.iterator();
     while (root_it.next()) |entry| {
         const key = entry.key_ptr.*;
@@ -104,7 +146,6 @@ fn upgradeZig(allocator: std.mem.Allocator) !void {
             continue;
         }
 
-        // Parse the version string
         const semver = try std.SemanticVersion.parse(key);
         try version_items.append(.{
             .name = key,
@@ -114,33 +155,124 @@ fn upgradeZig(allocator: std.mem.Allocator) !void {
 
     // No versions available
     if (version_items.items.len == 0) {
-        std.debug.print("No release versions found.\n", .{});
+        std.debug.print("[ERROR] No release versions found.\n", .{});
         return;
     }
 
     // Sort versions using semantic version comparison
     std.sort.insertion(VersionItem, version_items.items, {}, struct {
         fn lessThan(_: void, a: VersionItem, b: VersionItem) bool {
-            // Compare using semantic versioning (descending order)
             return std.SemanticVersion.order(a.semver, b.semver) == .lt;
         }
     }.lessThan);
 
-    // Get the latest version (first after sorting)
+    var required_version: VersionItem = undefined;
+
+    if (std.mem.eql(u8, chosen_version, "latest")) {
+        required_version = version_items.items[version_items.items.len - 1];
+    } else {
+        const chosen_index = indexOfVersion(version_items.items, try VersionItem.parse(chosen_version)) catch {
+            std.debug.print("[ERROR] Version not found: {s}\n", .{chosen_version});
+            return;
+        };
+        required_version = version_items.items[chosen_index];
+    }
+
+    var installed_version: std.SemanticVersion = undefined;
+    if (utils.getInstalledVersion(allocator)) |ver| {
+        installed_version = ver;
+    } else |_| {
+        installed_version = try std.SemanticVersion.parse("0.0.0");
+    }
+
+    switch (std.SemanticVersion.order(required_version.semver, installed_version)) {
+        .eq => {
+            std.debug.print("[INFO] Zig {s} is up to date.\n", .{required_version.name});
+            return;
+        },
+        else => {},
+    }
+
+    const latest_data = root.get(required_version.name).?.object;
+
+    const tarball_url = latest_data.get("x86_64-linux").?.object.get("tarball").?.string;
+    std.debug.print("[INFO] Downloading zig {s}.\n", .{required_version.name});
+
+    try downloader.downloadFileWithProgress(allocator, tarball_url, "zig-build-latest.tar", true);
+    try utils.extractTarball(allocator);
+    // try utils.extractTarFile(allocator, "zig-build-latest.tar", "zig-build-latest");
+
+    std.debug.print("[INFO] Installing zig {s}.\n", .{required_version.name});
+    try utils.installZig();
+    try std.fs.cwd().deleteTree("zig-build-latest");
+    try std.fs.cwd().deleteFile("zig-build-latest.tar");
+    std.debug.print("[INFO] Zig version {s} installed!\n", .{required_version.name});
+}
+
+fn upgradeZig(allocator: std.mem.Allocator) !void {
+    _ = signal.signal(signal.SIGINT, cleanUp);
+
+    const zig_builds_url = ZIG_WEBSITE ++ DOWNLOAD_PATH;
+    const index_file_path = "zig-builds-index.json";
+    try downloader.downloadFileWithProgress(allocator, zig_builds_url, index_file_path, false);
+
+    const json_text = try std.fs.cwd().readFileAlloc(allocator, index_file_path, 1 << 16);
+    defer allocator.free(json_text);
+    defer std.fs.cwd().deleteFile(index_file_path) catch |err| {
+        std.debug.print("[ERROR] Error deleting file: {}\n", .{err});
+    };
+
+    var parsed = try json.parseFromSlice(json.Value, allocator, json_text, .{});
+    defer parsed.deinit();
+
+    const root = parsed.value.object;
+
+    var version_items: ArrayList(VersionItem) = .init(allocator);
+    defer version_items.deinit();
+
+    var root_it = root.iterator();
+    while (root_it.next()) |entry| {
+        const key = entry.key_ptr.*;
+
+        // Skip "master"
+        if (std.mem.eql(u8, key, "master")) {
+            continue;
+        }
+
+        const semver = try std.SemanticVersion.parse(key);
+        try version_items.append(.{
+            .name = key,
+            .semver = semver,
+        });
+    }
+
+    // No versions available
+    if (version_items.items.len == 0) {
+        std.debug.print("[ERROR] No release versions found.\n", .{});
+        return;
+    }
+
+    // Sort versions using semantic version comparison
+    std.sort.insertion(VersionItem, version_items.items, {}, struct {
+        fn lessThan(_: void, a: VersionItem, b: VersionItem) bool {
+            return std.SemanticVersion.order(a.semver, b.semver) == .lt;
+        }
+    }.lessThan);
+
     const latest_version = version_items.items[version_items.items.len - 1];
     const installed_version = utils.getInstalledVersion(allocator) catch {
         std.debug.print("[INFO] Zig is not installed on this machine.\n", .{});
-        std.debug.print("[INFO] Run `zig-up install` to install the latest version.\n", .{});
+        std.debug.print("[INFO] Run `zigup install` to install the latest version.\n", .{});
         return;
     };
 
     switch (std.SemanticVersion.order(latest_version.semver, installed_version)) {
         .lt, .eq => {
-            std.debug.print("Zig {s} is up to date!\n", .{latest_version.name});
+            std.debug.print("[INFO] Zig {s} is up to date!\n", .{latest_version.name});
             return;
         },
         .gt => {
-            std.debug.print("There is a new zig version available: {s}.\n", .{latest_version.name});
+            std.debug.print("[INFO] There is a new zig version available: {s}.\n", .{latest_version.name});
         },
     }
 
@@ -157,10 +289,34 @@ fn upgradeZig(allocator: std.mem.Allocator) !void {
     try utils.installZig();
     try std.fs.cwd().deleteTree("zig-build-latest");
     try std.fs.cwd().deleteFile("zig-build-latest.tar");
-    std.debug.print("Zig version {s} installed!\n", .{latest_version.name});
+    std.debug.print("[INFO] Zig version {s} installed!\n", .{latest_version.name});
+}
+
+fn indexOfVersion(slice: []VersionItem, elem: VersionItem) !usize {
+    for (slice, 0..) |el, idx| {
+        if (std.SemanticVersion.order(el.semver, elem.semver) == .eq) {
+            return idx;
+        }
+    }
+    return error.IndexNotFound;
 }
 
 pub const VersionItem = struct {
     name: []const u8,
     semver: std.SemanticVersion,
+
+    pub fn parse(version_str: []const u8) !VersionItem {
+        return .{
+            .name = version_str,
+            .semver = try std.SemanticVersion.parse(version_str),
+        };
+    }
 };
+
+fn cleanUp(_: c_int) callconv(.c) void {
+    std.fs.cwd().deleteFile("zig-build-latest") catch {};
+    std.fs.cwd().deleteFile("zig-build-latest.tar") catch {};
+    std.fs.cwd().deleteFile("zig-builds-index.json") catch {};
+    // std.debug.print("\nCleaning up...\n", .{});
+    std.process.exit(0);
+}
