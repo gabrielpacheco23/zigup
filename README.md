@@ -3,7 +3,7 @@
 ## Zig update and installation system
 zigup is an automatic update / installing system for the Zig programming language
 
-> :warning: **This version only works for Linux at the moment.**
+> :warning: **This version only works on Linux at the moment.**
 
 ## Install zigup
 ```
