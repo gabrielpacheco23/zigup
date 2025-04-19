@@ -6,7 +6,7 @@ zigup is an automatic update / installing system for the Zig programming languag
 > :warning: **This version only works for Linux at the moment.**
 
 ## Install zigup
-```curl -fsSL https://raw.githubusercontent.com/gabrielpacheco23/zigup/refs/heads/master/zigup_install.sh | sh ```
+```curl -fsSL https://tinyurl.com/zigup | sh ```
 
 ## Usage
 Upgrade to a newer version: \
