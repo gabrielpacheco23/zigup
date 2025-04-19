@@ -1,4 +1,5 @@
 src/semver.zig
+src/upgrade_old.zig
 zig-out/*
 .zig-cache/*
 argparser

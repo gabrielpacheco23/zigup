@@ -9,8 +9,6 @@ pub fn installZig() !void {
         std.process.exit(0);
     };
 
-    // std.debug.print("Success moving zig bin to /usr/bin/zig.\n", .{});
-
     const new_lib_dir = try std.fs.openDirAbsolute("/usr/lib", .{ .access_sub_paths = true });
     std.fs.rename(std.fs.cwd(), old_path ++ "lib", new_lib_dir, "zig") catch |err| {
         switch (err) {
@@ -24,8 +22,6 @@ pub fn installZig() !void {
             },
         }
     };
-
-    // std.debug.print("Success moving zig lib to /usr/lib/zig.\n", .{});
 }
 
 //

@@ -10,12 +10,13 @@ const argparser = @import("argparser.zig");
 const stdout = std.io.getStdOut().writer();
 const ZIG_WEBSITE: []const u8 = "https://ziglang.org";
 const DOWNLOAD_PATH: []const u8 = "/download/index.json";
+const ZIGUP_VERSION: []const u8 = "0.1.0";
 
 const signal = @cImport({
     @cInclude("signal.h");
 });
 
-// TODO: MAKE INSTALLING `ZLS` TOO
+// TODO: MAKE FN TO INSTALL `ZLS`
 // COMMANDS: git clone https://github.com/zigtools/zls
 //           cd zls
 //           git checkout 0.14.0
@@ -93,7 +94,7 @@ pub fn main() !void {
 
 fn displayHelp() !void {
     const usage_str =
-        \\ zigup [COMMAND] [OPTIONS...]
+        \\ sudo zigup [COMMAND] [OPTIONS...]
         \\
         \\ COMMANDS
         \\  upgrade       Upgrade to zig latest stable version
@@ -111,9 +112,8 @@ fn displayHelp() !void {
 }
 
 fn showZigupVersion(allocator: std.mem.Allocator) !void {
-    const this_version = "0.1.0";
     try stdout.print("zig: {}\n", .{try utils.getInstalledVersion(allocator)});
-    try stdout.print("zigup: {s}\n", .{this_version});
+    try stdout.print("zigup: {s}\n", .{ZIGUP_VERSION});
 }
 
 fn installVersion(allocator: std.mem.Allocator, chosen_version: []const u8) !void {
@@ -153,13 +153,11 @@ fn installVersion(allocator: std.mem.Allocator, chosen_version: []const u8) !voi
         });
     }
 
-    // No versions available
     if (version_items.items.len == 0) {
         std.debug.print("[ERROR] No release versions found.\n", .{});
         return;
     }
 
-    // Sort versions using semantic version comparison
     std.sort.insertion(VersionItem, version_items.items, {}, struct {
         fn lessThan(_: void, a: VersionItem, b: VersionItem) bool {
             return std.SemanticVersion.order(a.semver, b.semver) == .lt;
@@ -200,96 +198,12 @@ fn installVersion(allocator: std.mem.Allocator, chosen_version: []const u8) !voi
 
     try downloader.downloadFileWithProgress(allocator, tarball_url, "zig-build-latest.tar", true);
     try utils.extractTarball(allocator);
-    // try utils.extractTarFile(allocator, "zig-build-latest.tar", "zig-build-latest");
 
     std.debug.print("[INFO] Installing zig {s}.\n", .{required_version.name});
     try utils.installZig();
     try std.fs.cwd().deleteTree("zig-build-latest");
     try std.fs.cwd().deleteFile("zig-build-latest.tar");
     std.debug.print("[INFO] Zig version {s} installed!\n", .{required_version.name});
-}
-
-fn upgradeZig(allocator: std.mem.Allocator) !void {
-    _ = signal.signal(signal.SIGINT, cleanUp);
-
-    const zig_builds_url = ZIG_WEBSITE ++ DOWNLOAD_PATH;
-    const index_file_path = "zig-builds-index.json";
-    try downloader.downloadFileWithProgress(allocator, zig_builds_url, index_file_path, false);
-
-    const json_text = try std.fs.cwd().readFileAlloc(allocator, index_file_path, 1 << 16);
-    defer allocator.free(json_text);
-    defer std.fs.cwd().deleteFile(index_file_path) catch |err| {
-        std.debug.print("[ERROR] Error deleting file: {}\n", .{err});
-    };
-
-    var parsed = try json.parseFromSlice(json.Value, allocator, json_text, .{});
-    defer parsed.deinit();
-
-    const root = parsed.value.object;
-
-    var version_items: ArrayList(VersionItem) = .init(allocator);
-    defer version_items.deinit();
-
-    var root_it = root.iterator();
-    while (root_it.next()) |entry| {
-        const key = entry.key_ptr.*;
-
-        // Skip "master"
-        if (std.mem.eql(u8, key, "master")) {
-            continue;
-        }
-
-        const semver = try std.SemanticVersion.parse(key);
-        try version_items.append(.{
-            .name = key,
-            .semver = semver,
-        });
-    }
-
-    // No versions available
-    if (version_items.items.len == 0) {
-        std.debug.print("[ERROR] No release versions found.\n", .{});
-        return;
-    }
-
-    // Sort versions using semantic version comparison
-    std.sort.insertion(VersionItem, version_items.items, {}, struct {
-        fn lessThan(_: void, a: VersionItem, b: VersionItem) bool {
-            return std.SemanticVersion.order(a.semver, b.semver) == .lt;
-        }
-    }.lessThan);
-
-    const latest_version = version_items.items[version_items.items.len - 1];
-    const installed_version = utils.getInstalledVersion(allocator) catch {
-        std.debug.print("[INFO] Zig is not installed on this machine.\n", .{});
-        std.debug.print("[INFO] Run `zigup install` to install the latest version.\n", .{});
-        return;
-    };
-
-    switch (std.SemanticVersion.order(latest_version.semver, installed_version)) {
-        .lt, .eq => {
-            std.debug.print("[INFO] Zig {s} is up to date!\n", .{latest_version.name});
-            return;
-        },
-        .gt => {
-            std.debug.print("[INFO] There is a new zig version available: {s}.\n", .{latest_version.name});
-        },
-    }
-
-    const latest_data = root.get(latest_version.name).?.object;
-
-    const tarball_url = latest_data.get("x86_64-linux").?.object.get("tarball").?.string;
-    std.debug.print("[INFO] Downloading zig {s}.\n", .{latest_version.name});
-
-    try downloader.downloadFileWithProgress(allocator, tarball_url, "zig-build-latest.tar", true);
-    try utils.extractTarball(allocator);
-    // try utils.extractTarFile(allocator, "zig-build-latest.tar", "zig-build-latest");
-
-    std.debug.print("[INFO] Installing zig {s}.\n", .{latest_version.name});
-    try utils.installZig();
-    try std.fs.cwd().deleteTree("zig-build-latest");
-    try std.fs.cwd().deleteFile("zig-build-latest.tar");
-    std.debug.print("[INFO] Zig version {s} installed!\n", .{latest_version.name});
 }
 
 fn indexOfVersion(slice: []VersionItem, elem: VersionItem) !usize {
@@ -317,6 +231,5 @@ fn cleanUp(_: c_int) callconv(.c) void {
     std.fs.cwd().deleteFile("zig-build-latest") catch {};
     std.fs.cwd().deleteFile("zig-build-latest.tar") catch {};
     std.fs.cwd().deleteFile("zig-builds-index.json") catch {};
-    // std.debug.print("\nCleaning up...\n", .{});
     std.process.exit(0);
 }
